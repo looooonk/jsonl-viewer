@@ -3,9 +3,135 @@ import curses
 import json
 import os
 import sys
+import zlib
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
+# Catppuccin Mocha accent colors
+MOCHA_ACCENTS_HEX = [
+    "#f5e0dc",
+    "#f2cdcd",
+    "#f5c2e7",
+    "#cba6f7",
+    "#f38ba8",
+    "#eba0ac",
+    "#fab387",
+    "#f9e2af",
+    "#a6e3a1",
+    "#94e2d5",
+    "#89dceb",
+    "#74c7ec",
+    "#89b4fa",
+    "#b4befe",
+]
+
+
+def _hex_to_rgb(h: str) -> tuple[int, int, int]:
+    h = h.lstrip("#")
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+
+def _rgb_to_xterm256(r: int, g: int, b: int) -> int:
+    """
+    Approximate mapping from 24-bit RGB to xterm-256 color index.
+    """
+    if r == g == b:
+        if r < 8:
+            return 16
+        if r > 248:
+            return 231
+        return 232 + (r - 8) // 10
+
+    def to_6(x: int) -> int:
+        return int(round(x / 255 * 5))
+
+    rr, gg, bb = to_6(r), to_6(g), to_6(b)
+    return 16 + 36 * rr + 6 * gg + bb
+
+
+def _key_to_pair_id(key: str, num_pairs: int) -> int:
+    # Stable across runs/platforms
+    h = zlib.crc32(key.encode("utf-8")) & 0xFFFFFFFF
+    return 1 + (h % num_pairs)
+
+
+Segment = tuple[str, int]
+StyledLine = list[Segment]
+
+
+def _json_atom(v: Any) -> str:
+    return json.dumps(v, ensure_ascii=False)
+
+
+def _render_json_styled(
+    v: Any,
+    indent: int,
+    key_attr_fn,
+    normal_attr: int,
+) -> list[StyledLine]:
+    """
+    Render JSON in a json.dumps-like layout but with styles:
+    - keys styled using key_attr_fn(key_str) (should include bold+color)
+    - everything else uses normal_attr
+    """
+    lines: list[StyledLine] = []
+
+    sp = " " * indent
+    sp2 = " " * (indent + 2)
+
+    if isinstance(v, dict):
+        lines.append([(sp + "{", normal_attr)])
+        items = list(v.items())
+        for i, (k, val) in enumerate(items):
+            last = (i == len(items) - 1)
+
+            k_str = json.dumps(k, ensure_ascii=False)
+            k_attr = key_attr_fn(str(k))
+
+            if isinstance(val, (dict, list)):
+                opener = "{" if isinstance(val, dict) else "["
+                line: StyledLine = [
+                    (sp2, normal_attr),
+                    (k_str, k_attr),
+                    (": " + opener, normal_attr),
+                ]
+                lines.append(line)
+                lines.extend(_render_json_styled(val, indent + 2, key_attr_fn, normal_attr))
+                closer = "}" if isinstance(val, dict) else "]"
+                tail = closer + ("" if last else ",")
+                lines[-1].append((tail, normal_attr)) if lines[-1] else lines.append([(sp2 + tail, normal_attr)])
+            else:
+                atom = _json_atom(val)
+                comma = "" if last else ","
+                lines.append([
+                    (sp2, normal_attr),
+                    (k_str, k_attr),
+                    (": " + atom + comma, normal_attr),
+                ])
+
+        lines.append([(sp + "}", normal_attr)])
+        return lines
+
+    if isinstance(v, list):
+        lines.append([(sp + "[", normal_attr)])
+        for i, item in enumerate(v):
+            last = (i == len(v) - 1)
+            if isinstance(item, (dict, list)):
+                opener = "{" if isinstance(item, dict) else "["
+                lines.append([(sp2 + opener, normal_attr)])
+                lines.extend(_render_json_styled(item, indent + 2, key_attr_fn, normal_attr))
+                closer = "}" if isinstance(item, dict) else "]"
+                tail = closer + ("" if last else ",")
+                lines[-1].append((tail, normal_attr)) if lines[-1] else lines.append([(sp2 + tail, normal_attr)])
+            else:
+                atom = _json_atom(item)
+                comma = "" if last else ","
+                lines.append([(sp2 + atom + comma, normal_attr)])
+        lines.append([(sp + "]", normal_attr)])
+        return lines
+
+    lines.append([(sp + _json_atom(v), normal_attr)])
+    return lines
 
 def _die(msg: str, code: int = 2) -> None:
     print(f"jsonl: {msg}", file=sys.stderr)
@@ -83,35 +209,51 @@ def _read_line_at(path: str, start: int, end: int) -> bytes:
         return f.read(end - start)
 
 
-def _pretty_json(obj: Any) -> str:
-    return json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True)
-
-
-def _wrap_lines(lines: List[str], width: int) -> List[str]:
+def _wrap_styled_lines(lines: list[list[tuple[str, int]]], width: int) -> list[list[tuple[str, int]]]:
     """
-    Wrap each logical line to fit width. Keeps indentation visually.
+    Wrap styled lines (list of (text, attr) segments) to fit `width`.
+    Preserves per-segment attributes. Breaks only at character boundaries.
     """
     if width <= 1:
         return lines
 
-    out: List[str] = []
-    for ln in lines:
-        if len(ln) <= width:
-            out.append(ln)
-            continue
+    out: list[list[tuple[str, int]]] = []
 
-        indent_len = len(ln) - len(ln.lstrip(" "))
-        indent = " " * indent_len
-        text = ln
-        
-        out.append(text[:width])
-        text = text[width:]
+    for line in lines:
+        cur: list[tuple[str, int]] = []
+        cur_len = 0
 
-        cont_width = max(1, width - indent_len)
-        while text:
-            chunk = text[:cont_width]
-            out.append(indent + chunk)
-            text = text[cont_width:]
+        def flush() -> None:
+            nonlocal cur, cur_len
+            out.append(cur if cur else [("", curses.A_NORMAL)])
+            cur = []
+            cur_len = 0
+
+        for text, attr in line:
+            if not text:
+                continue
+
+            i = 0
+            while i < len(text):
+                space = width - cur_len
+                if space <= 0:
+                    flush()
+                    space = width
+
+                chunk = text[i:i + space]
+                i += len(chunk)
+
+                if cur and cur[-1][1] == attr:
+                    cur[-1] = (cur[-1][0] + chunk, attr)
+                else:
+                    cur.append((chunk, attr))
+
+                cur_len += len(chunk)
+
+                if cur_len >= width:
+                    flush()
+
+        flush()
 
     return out
 
@@ -120,26 +262,47 @@ def _wrap_lines(lines: List[str], width: int) -> List[str]:
 class RowData:
     ok: bool
     title: str
-    body_lines: List[str]
+    obj: Any = None
+    raw_fallback: Optional[str] = None
 
 
 def _parse_row(raw_line: bytes, row_idx: int) -> RowData:
     s = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
     if not s.strip():
-        return RowData(ok=True, title=f"Row {row_idx+1}: (empty line)", body_lines=[""])
+        return RowData(ok=True, title=f"Row {row_idx+1}: (empty line)", obj="")
 
     try:
         obj = json.loads(s)
-        pretty = _pretty_json(obj)
-        lines = pretty.splitlines() if pretty else [""]
-        return RowData(ok=True, title=f"Row {row_idx+1}: OK", body_lines=lines)
+        return RowData(ok=True, title=f"Row {row_idx+1}: OK", obj=obj)
     except json.JSONDecodeError as e:
         msg = f"Row {row_idx+1}: INVALID JSON ({e.msg} at col {e.colno})"
-        return RowData(ok=False, title=msg, body_lines=[s])
+        return RowData(ok=False, title=msg, obj=None, raw_fallback=s)
 
 
 def _viewer(stdscr: "curses._CursesWindow", path: str) -> None:
     curses.curs_set(0)
+    
+    curses.start_color()
+    try:
+        curses.use_default_colors()
+    except curses.error:
+        pass
+
+    num_pairs = len(MOCHA_ACCENTS_HEX)
+    for i, hx in enumerate(MOCHA_ACCENTS_HEX, start=1):
+        r, g, b = _hex_to_rgb(hx)
+        fg = _rgb_to_xterm256(r, g, b)
+        try:
+            curses.init_pair(i, fg, -1)
+        except curses.error:
+            pass
+
+    def key_attr_fn(key: str) -> int:
+        pid = _key_to_pair_id(key, num_pairs)
+        return curses.A_BOLD | curses.color_pair(pid)
+
+    normal_attr = curses.A_NORMAL
+    
     stdscr.keypad(True)
 
     offsets = _build_offsets(path)
@@ -179,16 +342,45 @@ def _viewer(stdscr: "curses._CursesWindow", path: str) -> None:
         content_height = max(0, height - 3)
         content_width = max(1, width - 1)
 
-        wrapped = _wrap_lines(row.body_lines, content_width)
-        max_scroll = max(0, len(wrapped) - content_height)
+        if row.ok:
+            styled_lines = _render_json_styled(row.obj, 0, key_attr_fn, normal_attr)
+        else:
+            raw = row.raw_fallback or ""
+            styled_lines = [[(raw, curses.A_DIM)]]
+        
+        if row.ok:
+            styled_lines = _render_json_styled(row.obj, 0, key_attr_fn, normal_attr)
+        else:
+            raw = row.raw_fallback or ""
+            styled_lines = [[(raw, curses.A_DIM)]]
+
+        styled_lines = _wrap_styled_lines(styled_lines, content_width)
+
+        max_scroll = max(0, len(styled_lines) - content_height)
         if scroll > max_scroll:
             scroll = max_scroll
         if scroll < 0:
             scroll = 0
 
-        view = wrapped[scroll : scroll + content_height]
-        for i, ln in enumerate(view):
-            stdscr.addnstr(2 + i, 0, ln, content_width)
+        view = styled_lines[scroll : scroll + content_height]
+
+        for i, line in enumerate(view):
+            y = 2 + i
+            x = 0
+            remaining = content_width
+            for text, attr in line:
+                if remaining <= 0:
+                    break
+                if not text:
+                    continue
+                chunk = text[:remaining]
+                try:
+                    stdscr.addstr(y, x, chunk, attr)
+                except curses.error:
+                    pass
+                x += len(chunk)
+                remaining -= len(chunk)
+
 
         if max_scroll > 0:
             footer = f"Scroll: {scroll}/{max_scroll}"
