@@ -2,7 +2,9 @@
 
 A CLI tool to manually view the rows of a JSON lines file.
 
-Requires the use of `curses`, and therefore only supports MacOS & Linux.
+## Requirements
+
+`curses` and Python (>= 3.9) must be installed.
 
 ## Installation
 
