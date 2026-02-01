@@ -38,3 +38,29 @@ To view more information, use
 ```
 jsonl -h
 ```
+
+## Themes
+
+You can specify a certain color theme using the `-t` argument.
+
+Currently, 4 themes are supported:
+- `catppuccin-frappe`
+- `catppuccin-latte`
+- `catppuccin-macchiato`
+- `catppuccin-mocha`
+
+If not specified, the theme will default to `catppuccin-mocha`.
+
+You may add additional themes at `./json_cli/themes/`.
+
+## Commands
+For easy navigation, you can press `:` in the curses window to enter a command, much like vim.
+
+Currently, the following commands are supported:
+
+- Jump to certain line number (1-indexed):
+    ```
+    :goto INT
+    ```
+
+Other commands, including `find` with regular expressions and aggregation are in development.
