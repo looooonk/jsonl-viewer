@@ -63,7 +63,14 @@ def _key_to_pair_id(key: str, num_pairs: int) -> int:
 
 
 def _load_theme(theme: str) -> List[str]:
-    path = Path(__file__).parent / "themes" / f"{theme}.json"
-    with path.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-    return data["key-colors"]
+    
+    try:
+        path = Path(__file__).parent / "themes" / f"{theme}.json"
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data["key-colors"]
+    except:
+        path = Path(__file__).parent / "themes" / "catppuccin-mocha.json" # Default
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data["key-colors"]

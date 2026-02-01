@@ -176,7 +176,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser = argparse.ArgumentParser(prog="jsonl", add_help=True)
     parser.add_argument("file", metavar="FILE", help="Path to a .jsonl file")
     parser.add_argument("-b", "--brief", action="store_true", help="Show file characteristics and exit")
-    parser.add_argument("-t", "--theme", action="store_true", help="Color theme", default="catppuccin-mocha")
+    parser.add_argument("-t", "--theme", metavar="STR", type=str, default="catppuccin-mocha", help="Color theme")
     args = parser.parse_args(argv)
 
     path = _validate_path(args.file)
