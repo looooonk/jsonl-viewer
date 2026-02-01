@@ -151,7 +151,6 @@ def _viewer(stdscr: "curses._CursesWindow", path: str, theme: str) -> None:
                 idx = new_idx
                 scroll = 0
                 status_msg = msg
-            continue
         elif ch == curses.KEY_DOWN:
             scroll += 1
         elif ch == curses.KEY_UP:
