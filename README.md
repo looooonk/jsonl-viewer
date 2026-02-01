@@ -2,6 +2,9 @@
 
 A CLI tool to manually view the rows of a JSON lines file.
 
+![HellaSwag JSONL Sample](./resources/hellaswag_sample.png)
+Sample JSONL entry fron the HellaSwag dataset.
+
 ## Requirements
 
 `curses` and Python (>= 3.9) must be installed.
