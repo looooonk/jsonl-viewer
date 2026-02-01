@@ -500,7 +500,7 @@ def _viewer(stdscr: "curses._CursesWindow", path: str) -> None:
         raw = _read_line_at(path, start, end)
         row = _parse_row(raw, idx)
 
-        header = f"{os.path.basename(path)}  |  {idx + 1}/{total_lines}  |  ↑/↓ row  ←/→ indent  PgUp/PgDn scroll  q quit"
+        header = f"{os.path.basename(path)}  |  {idx + 1}/{total_lines}  |  ↑/↓ scroll  ←/→ row  PgUp/PgDn indent  q quit"
         stdscr.addnstr(0, 0, header, max(0, width - 1), curses.A_REVERSE)
 
         title = row.title
@@ -550,7 +550,7 @@ def _viewer(stdscr: "curses._CursesWindow", path: str) -> None:
 
 
         if max_scroll > 0:
-            footer = f"Scroll: {scroll}/{max_scroll}"
+            footer = f"Lines {scroll} - {scroll + content_height}"
             stdscr.addnstr(height - 1, 0, footer, max(0, width - 1), curses.A_DIM)
 
         stdscr.refresh()
@@ -559,19 +559,19 @@ def _viewer(stdscr: "curses._CursesWindow", path: str) -> None:
         if ch in (ord("q"), ord("Q")):
             return
         elif ch == curses.KEY_DOWN:
-            idx += 1
-            scroll = 0
+            scroll += 1
         elif ch == curses.KEY_UP:
+            scroll -= 1
+        elif ch == curses.KEY_LEFT:
             idx -= 1
             scroll = 0
-        elif ch == curses.KEY_LEFT:
-            indent_delta = max(indent_delta - 1, 1)
         elif ch == curses.KEY_RIGHT:
-            indent_delta = min(indent_delta + 1, 8)
+            idx += 1
+            scroll = 0
         elif ch in (curses.KEY_NPAGE,):
-            scroll += max(1, content_height)
+            indent_delta = max(indent_delta - 1, 1)
         elif ch in (curses.KEY_PPAGE,):
-            scroll -= max(1, content_height)
+            indent_delta = min(indent_delta + 1, 8)
         elif ch == curses.KEY_RESIZE:
             pass
         else:
