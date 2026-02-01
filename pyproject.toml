@@ -11,3 +11,10 @@ dependencies = []
 
 [project.scripts]
 jsonl = "jsonl_cli.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["jsonl_cli*"]
+exclude = ["resources*"]
+
+[tool.setuptools.package-data]
+jsonl_cli = ["themes/*.json"]
