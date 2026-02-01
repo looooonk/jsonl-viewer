@@ -7,12 +7,8 @@ import zlib
 from dataclasses import dataclass
 from typing import Any, List, Optional, Tuple
 
-# Catppuccin Mocha accent colors
+
 MOCHA_ACCENTS_HEX = [
-    "#f5e0dc",
-    "#f2cdcd",
-    "#f5c2e7",
-    "#cba6f7",
     "#f38ba8",
     "#eba0ac",
     "#fab387",
@@ -23,17 +19,51 @@ MOCHA_ACCENTS_HEX = [
     "#74c7ec",
     "#89b4fa",
     "#b4befe",
+    "#f5e0dc",
+    "#f2cdcd",
+    "#f5c2e7",
+    "#cba6f7",
 ]
+
+# We use this datastructure since different portions of 1 line need to have different curses bitmasks (due to colors and bolding).
+Segment = tuple[str, int]  # (raw_text, curses_attribute_bitmask)
+StyledLine = list[Segment] # 1 Line in the output
+
+# A container for 1 JSONL row.
+@dataclass
+class RowData:
+    ok: bool                            # Whether the line has been successfully parsed to JSON.
+    title: str                          # The status for the row displayed at the top of the window.
+    obj: Any = None                     # The parsed Python object for this JSONL row.
+    raw_fallback: Optional[str] = None  # Fallback raw JSONL text for failed formatting.
 
 
 def _hex_to_rgb(h: str) -> tuple[int, int, int]:
+    """
+    Converts a hex color string into RGB values.
+    
+    Args:
+        h: The hex string.
+    
+    Returns:
+        A 3-tuple of the RGB values in base 16, each between 00 and FF inclusive.
+    """
     h = h.lstrip("#")
     return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
 
 
 def _rgb_to_xterm256(r: int, g: int, b: int) -> int:
     """
-    Approximate mapping from 24-bit RGB to xterm-256 color index.
+    Maps 24-bit RGB values to xterm-256 color indices.
+    Will always map the closest possible color.
+    
+    Args:
+        r: The base 16 value for red.
+        g: The base 16 value for green.
+        b: The base 16 value for blue.
+    
+    Returns:
+        The index of the corresponding xterm-256 color.
     """
     if r == g == b:
         if r < 8:
@@ -50,16 +80,32 @@ def _rgb_to_xterm256(r: int, g: int, b: int) -> int:
 
 
 def _key_to_pair_id(key: str, num_pairs: int) -> int:
-    # Stable across runs/platforms
+    """
+    Maps a string to a color via hashing.
+    Uses zlib.crc32() as the hash function.
+    
+    Args:
+        key:       The string to assign a color to.
+        num_pairs: The number of colors that can be assigned.
+        
+    Returns:
+        The index in curses corresponding to that color.
+        Note that index 0 in curses corresponds to the default text color, so the return value is 1-indexed.
+    """
     h = zlib.crc32(key.encode("utf-8")) & 0xFFFFFFFF
     return 1 + (h % num_pairs)
 
 
-Segment = tuple[str, int]
-StyledLine = list[Segment]
-
-
 def _json_atom(v: Any) -> str:
+    """
+    Convert a terminal endpoint in a JSONL file to a string.
+    
+    Args:
+        v: A terminal endpoint in the JSONL file, i.e. a value or an item in a list.
+    
+    Returns:
+        The string corresponding to the given terminal endpoint.
+    """
     return json.dumps(v, ensure_ascii=False)
 
 
@@ -70,9 +116,16 @@ def _render_json_styled(
     normal_attr: int,
 ) -> list[StyledLine]:
     """
-    Render JSON in a json.dumps-like layout but with styles:
-    - keys styled using key_attr_fn(key_str) (should include bold+color)
-    - everything else uses normal_attr
+    Recursively renders a Python object corresponding to 1 line in a JSONL file.
+    
+    Args:
+        v:           The Python object to render.
+        indent:      The base indent to use.
+        key_attr_fn: Function that maps strings to curses bitmasks. Applies to keys.
+        normal_attr: Function that maps strings to curses bitmasks. Applies to everything else.
+    
+    Returns:
+        The rendered Python object in a list of StyledLines.
     """
     lines: list[StyledLine] = []
 
@@ -133,12 +186,32 @@ def _render_json_styled(
     lines.append([(sp + _json_atom(v), normal_attr)])
     return lines
 
+
 def _die(msg: str, code: int = 2) -> None:
+    """
+    Raises SystemExit.
+    
+    Args:
+        msg:  The message to display to the user.
+        code: The system exit code.
+    
+    Raises:
+        Unconditionally raises SystemExit.
+    """
     print(f"jsonl: {msg}", file=sys.stderr)
     raise SystemExit(code)
 
 
 def _human_bytes(n: int) -> str:
+    """
+    Converts number of bytes into a human-readable form.
+    
+    Args:
+        n: The number of bytes to convert.
+    
+    Returns:
+        The human-readable conversion of n bytes.
+    """
     units = ["B", "KiB", "MiB", "GiB", "TiB"]
     x = float(n)
     for u in units:
@@ -151,6 +224,18 @@ def _human_bytes(n: int) -> str:
 
 
 def _validate_path(path: str) -> str:
+    """
+    Validates whether a path is a valid JSONL file.
+    
+    Args:
+        path: The path to the JSONL file.
+    
+    Returns:
+        The given path without modification.
+
+    Raises:
+        SystemExit if path is abnormal.
+    """
     if not path.endswith(".jsonl"):
         _die("FILE must end with .jsonl")
     if not os.path.exists(path):
@@ -162,8 +247,14 @@ def _validate_path(path: str) -> str:
 
 def _scan_brief(path: str) -> Tuple[int, int, List[str], int]:
     """
-    Returns: (line_count, file_size_bytes, columns_sorted, invalid_json_lines)
+    Returns a summary of the given JSONL file.
     Columns are the union of keys across all JSON objects that are dicts.
+    
+    Args:
+        path: The path to the JSONL file.
+    
+    Returns:
+        A 4-tuple of (line_count, file_size_bytes, columns_sorted, invalid_json_lines).
     """
     st = os.stat(path)
     size = st.st_size
@@ -189,11 +280,17 @@ def _scan_brief(path: str) -> Tuple[int, int, List[str], int]:
 
 def _build_offsets(path: str) -> List[int]:
     """
-    Build file offsets for each line start so we can seek to any row.
-    offsets[i] is the byte position where line i starts (0-indexed).
+    Builds file 0-indexed offsets for each line start.
+    
+    Args:
+        path: The path to the JSONL file.
+    
+    Returns:
+        A list of 0-indexed offsets of length equal to the number of lines in the JSONL file.
     """
     offsets: List[int] = []
     pos = 0
+    
     offsets.append(pos)
     with open(path, "rb") as f:
         for raw in f:
@@ -204,23 +301,41 @@ def _build_offsets(path: str) -> List[int]:
 
 
 def _read_line_at(path: str, start: int, end: int) -> bytes:
+    """
+    Wrapper for reading lines of a file, i.e. start <= && < end
+    
+    Args:
+        path:  The path to the JSONL file.
+        start: The index of the byte to start reading.
+        end:   The index of the byte right after the byte to end reading.
+    
+    Returns:
+        A segment of bytes of the given JSONL file.
+    """
     with open(path, "rb") as f:
         f.seek(start)
         return f.read(end - start)
 
 
-def _wrap_styled_lines(lines: list[list[tuple[str, int]]], width: int) -> list[list[tuple[str, int]]]:
+def _wrap_styled_lines(lines: list[StyledLine], width: int) -> list[StyledLine]:
     """
-    Wrap styled lines (list of (text, attr) segments) to fit `width`.
-    Preserves per-segment attributes. Breaks only at character boundaries.
+    Wrap styled lines to fit window width.
+    Preserves per-segment attributes and breaks only at character boundaries.
+    
+    Args:
+        lines: List of StyledLines to wrap.
+        width: Width to wrap to.
+        
+    Returns:
+        The resulting list of StyledLines that have been wrapped.
     """
     if width <= 1:
         return lines
 
-    out: list[list[tuple[str, int]]] = []
+    out: list[StyledLine] = []
 
     for line in lines:
-        cur: list[tuple[str, int]] = []
+        cur: StyledLine = []
         cur_len = 0
 
         def flush() -> None:
@@ -258,15 +373,20 @@ def _wrap_styled_lines(lines: list[list[tuple[str, int]]], width: int) -> list[l
     return out
 
 
-@dataclass
-class RowData:
-    ok: bool
-    title: str
-    obj: Any = None
-    raw_fallback: Optional[str] = None
-
-
 def _parse_row(raw_line: bytes, row_idx: int) -> RowData:
+    """
+    Parses raw bytes of a JSONL row into a RowData structure.
+    
+    Args:
+        raw_line: Bytes of the JSONL row.
+        row_idx:  0-indexed row number.
+    
+    Returns:
+        A RowData structure corresponding to the given row bytes.
+        
+    Raises:
+        JSONDecodeError if the row cannot be parsed.
+    """
     s = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
     if not s.strip():
         return RowData(ok=True, title=f"Row {row_idx+1}: (empty line)", obj="")
@@ -280,6 +400,13 @@ def _parse_row(raw_line: bytes, row_idx: int) -> RowData:
 
 
 def _viewer(stdscr: "curses._CursesWindow", path: str) -> None:
+    """
+    Main driver code for the curses window.
+    
+    Args:
+        stdscr: The curses window to display to.
+        path:   Path to the JSONL file.
+    """
     curses.curs_set(0)
     
     curses.start_color()
@@ -333,7 +460,7 @@ def _viewer(stdscr: "curses._CursesWindow", path: str) -> None:
         raw = _read_line_at(path, start, end)
         row = _parse_row(raw, idx)
 
-        header = f"{os.path.basename(path)}  |  {idx+1}/{total_lines}  |  ↑/↓ row  PgUp/PgDn scroll  q quit"
+        header = f"{os.path.basename(path)}  |  {idx + 1}/{total_lines}  |  ↑/↓ row  PgUp/PgDn scroll  q quit"
         stdscr.addnstr(0, 0, header, max(0, width - 1), curses.A_REVERSE)
 
         title = row.title
