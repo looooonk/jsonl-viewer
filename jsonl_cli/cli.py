@@ -438,6 +438,115 @@ def _parse_row(raw_line: bytes, row_idx: int) -> RowData:
         return RowData(ok=False, title=msg, obj=None, raw_fallback=s)
 
 
+def _prompt_command(stdscr: "curses._CursesWindow", prompt: str = ":") -> str | None:
+    """
+    Read a command from the bottom line.
+
+    Args:
+        stdscr: The curses window to display to.
+        prompt: The prompt / command to read.
+    
+    Returns:
+        The command string (without leading ':') or None if cancelled (ESC).
+    """
+    height, width = stdscr.getmaxyx()
+    y = height - 1
+
+    buf: list[str] = []
+    pos = 0
+
+    # Display prompt
+    stdscr.move(y, 0)
+    stdscr.clrtoeol()
+    stdscr.addnstr(y, 0, prompt, width - 1, curses.A_REVERSE)
+    stdscr.refresh()
+
+    while True:
+        ch = stdscr.get_wch()  # returns str for printable, int for special keys
+
+        # Cancel
+        if ch == "\x1b":  # ESC
+            return None
+
+        # Enter
+        if ch in ("\n", "\r"):
+            return "".join(buf).strip()
+
+        # Backspace variants
+        if ch in (curses.KEY_BACKSPACE, "\b", "\x7f"):
+            if pos > 0:
+                buf.pop(pos - 1)
+                pos -= 1
+
+        # Left / Right
+        elif ch == curses.KEY_LEFT:
+            pos = max(0, pos - 1)
+        elif ch == curses.KEY_RIGHT:
+            pos = min(len(buf), pos + 1)
+
+        # Home / End
+        elif ch == curses.KEY_HOME:
+            pos = 0
+        elif ch == curses.KEY_END:
+            pos = len(buf)
+
+        # Printable char
+        elif isinstance(ch, str) and ch.isprintable():
+            buf.insert(pos, ch)
+            pos += 1
+
+        # Redraw line
+        cmd_text = prompt + "".join(buf)
+        if len(cmd_text) >= width:
+            # crude horizontal clipping: show the rightmost part
+            cmd_text = cmd_text[-(width - 1):]
+        stdscr.move(y, 0)
+        stdscr.clrtoeol()
+        stdscr.addnstr(y, 0, cmd_text, width - 1, curses.A_REVERSE)
+
+        # Place cursor (best-effort)
+        cursor_x = min(width - 1, len(prompt) + pos)
+        stdscr.move(y, cursor_x)
+        stdscr.refresh()
+
+
+def _apply_command(cmd: str, total_lines: int, idx: int) -> tuple[int, str | None]:
+    """
+    Applies a command string.
+    
+    Args:
+        cmd:         The command inputted.
+        total_lines: The number of rows in the JSONL file.
+        idx:         The current index being viewed.
+    
+    Returns:
+        A tuple (new_idx, status_message_or_None).
+    """
+    if not cmd:
+        return idx, None
+
+    parts = cmd.split()
+    name = parts[0].lower()
+
+    if name in ("goto", "g") and len(parts) == 2:
+        try:
+            n = int(parts[1])
+        except ValueError:
+            return idx, "goto expects an integer row number"
+
+        if total_lines <= 0:
+            return idx, "file has no rows"
+
+        # 1-indexed user input
+        n = max(1, min(total_lines, n))
+        return n - 1, None
+
+    if name in ("q", "quit", "exit"):
+        return -1, None  # sentinel: caller quits
+
+    return idx, f"unknown command: {cmd}"
+
+
 def _viewer(stdscr: "curses._CursesWindow", path: str) -> None:
     """
     Main driver code for the curses window.
@@ -447,6 +556,8 @@ def _viewer(stdscr: "curses._CursesWindow", path: str) -> None:
         path:   Path to the JSONL file.
     """
     curses.curs_set(0)
+    
+    status_msg: str | None = None
     
     curses.start_color()
     try:
@@ -550,14 +661,32 @@ def _viewer(stdscr: "curses._CursesWindow", path: str) -> None:
 
 
         if max_scroll > 0:
-            footer = f"Lines {scroll} - {scroll + content_height}"
-            stdscr.addnstr(height - 1, 0, footer, max(0, width - 1), curses.A_DIM)
+            footer = None
+            if status_msg:
+                footer = status_msg
+            elif max_scroll > 0:
+                footer = f"Lines {scroll} - {min(scroll + content_height, len(styled_lines))}"
+
+            if footer:
+                stdscr.addnstr(height - 1, 0, footer, max(0, width - 1), curses.A_DIM)
+
 
         stdscr.refresh()
         ch = stdscr.getch()
 
         if ch in (ord("q"), ord("Q")):
             return
+        elif ch == ord(":"):
+            cmd = _prompt_command(stdscr, prompt=":")
+            status_msg = None
+            if cmd is not None:
+                new_idx, msg = _apply_command(cmd, total_lines, idx)
+                if new_idx == -1:
+                    return
+                idx = new_idx
+                scroll = 0
+                status_msg = msg
+            continue
         elif ch == curses.KEY_DOWN:
             scroll += 1
         elif ch == curses.KEY_UP:
