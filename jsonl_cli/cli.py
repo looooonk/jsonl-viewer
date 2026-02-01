@@ -7,7 +7,6 @@ import zlib
 from dataclasses import dataclass
 from typing import Any, List, Optional, Tuple
 
-
 MOCHA_ACCENTS_HEX = [
     "#f38ba8",
     "#eba0ac",
@@ -114,26 +113,31 @@ def _render_json_styled(
     indent: int,
     key_attr_fn,
     normal_attr: int,
+    indent_delta: int,
 ) -> list[StyledLine]:
     """
     Recursively renders a Python object corresponding to 1 line in a JSONL file.
     
     Args:
-        v:           The Python object to render.
-        indent:      The base indent to use.
-        key_attr_fn: Function that maps strings to curses bitmasks. Applies to keys.
-        normal_attr: Function that maps strings to curses bitmasks. Applies to everything else.
+        v:            The Python object to render.
+        indent:       The base indent to use.
+        key_attr_fn:  Function that maps strings to curses bitmasks. Applies to keys.
+        normal_attr:  Function that maps strings to curses bitmasks. Applies to everything else.
+        indent_delta: Amount to indent each line.
     
     Returns:
         The rendered Python object in a list of StyledLines.
     """
     lines: list[StyledLine] = []
 
+    is_root = (indent == 0)
+    
     sp = " " * indent
-    sp2 = " " * (indent + 2)
+    sp_child = " " * (indent + indent_delta)
 
     if isinstance(v, dict):
-        lines.append([(sp + "{", normal_attr)])
+        if is_root:
+            lines.append([(sp + "{", normal_attr)])
         items = list(v.items())
         for i, (k, val) in enumerate(items):
             last = (i == len(items) - 1)
@@ -144,46 +148,53 @@ def _render_json_styled(
             if isinstance(val, (dict, list)):
                 opener = "{" if isinstance(val, dict) else "["
                 line: StyledLine = [
-                    (sp2, normal_attr),
+                    (sp_child, normal_attr),
                     (k_str, k_attr),
                     (": " + opener, normal_attr),
                 ]
                 lines.append(line)
-                lines.extend(_render_json_styled(val, indent + 2, key_attr_fn, normal_attr))
+                lines.extend(_render_json_styled(val, indent + indent_delta, key_attr_fn, normal_attr, indent_delta))
                 closer = "}" if isinstance(val, dict) else "]"
                 tail = closer + ("" if last else ",")
-                lines[-1].append((tail, normal_attr)) if lines[-1] else lines.append([(sp2 + tail, normal_attr)])
+                lines.append([(sp_child + tail, normal_attr)]) if lines[-1] else lines.append([(sp_child + tail, normal_attr)])
             else:
                 atom = _json_atom(val)
                 comma = "" if last else ","
                 lines.append([
-                    (sp2, normal_attr),
+                    (sp_child, normal_attr),
                     (k_str, k_attr),
                     (": " + atom + comma, normal_attr),
                 ])
-
-        lines.append([(sp + "}", normal_attr)])
+        if is_root:
+            lines.append([(sp + "}", normal_attr)])
+        
         return lines
 
     if isinstance(v, list):
-        lines.append([(sp + "[", normal_attr)])
+        if is_root:
+            lines.append([(sp + "[", normal_attr)])
+        
         for i, item in enumerate(v):
             last = (i == len(v) - 1)
             if isinstance(item, (dict, list)):
                 opener = "{" if isinstance(item, dict) else "["
-                lines.append([(sp2 + opener, normal_attr)])
-                lines.extend(_render_json_styled(item, indent + 2, key_attr_fn, normal_attr))
+                lines.append([(sp_child + opener, normal_attr)])
+                lines.extend(_render_json_styled(item, indent + indent_delta, key_attr_fn, normal_attr, indent_delta))
                 closer = "}" if isinstance(item, dict) else "]"
                 tail = closer + ("" if last else ",")
-                lines[-1].append((tail, normal_attr)) if lines[-1] else lines.append([(sp2 + tail, normal_attr)])
+                lines.append([(sp_child + tail, normal_attr)]) if lines[-1] else lines.append([(sp_child + tail, normal_attr)])
             else:
                 atom = _json_atom(item)
                 comma = "" if last else ","
-                lines.append([(sp2 + atom + comma, normal_attr)])
-        lines.append([(sp + "]", normal_attr)])
+                lines.append([(sp_child + atom + comma, normal_attr)])
+        
+        if is_root:
+            lines.append([(sp + "]", normal_attr)])
+        
         return lines
 
     lines.append([(sp + _json_atom(v), normal_attr)])
+    
     return lines
 
 
@@ -196,7 +207,7 @@ def _die(msg: str, code: int = 2) -> None:
         code: The system exit code.
     
     Raises:
-        Unconditionally raises SystemExit.
+        SystemExit unconditionally.
     """
     print(f"jsonl: {msg}", file=sys.stderr)
     raise SystemExit(code)
@@ -335,14 +346,46 @@ def _wrap_styled_lines(lines: list[StyledLine], width: int) -> list[StyledLine]:
     out: list[StyledLine] = []
 
     for line in lines:
+        # Build the rendered plain text for alignment calculations
+        rendered = "".join(t for t, _ in line)
+
+        # Prefer aligning to value start (first occurrence of ": ")
+        sep = rendered.find(": ")
+        if sep != -1:
+            align = sep + 2  # start of value, right after ": "
+        else:
+            # Fallback: align to leading indentation (spaces at start)
+            align = 0
+            while align < len(rendered) and rendered[align] == " ":
+                align += 1
+
+        # Never let alignment consume the full line width
+        align = min(align, max(0, width - 1))
+
         cur: StyledLine = []
         cur_len = 0
+        first_visual_line = True
+
+        def _append(text: str, attr: int) -> None:
+            nonlocal cur, cur_len
+            if not text:
+                return
+            if cur and cur[-1][1] == attr:
+                cur[-1] = (cur[-1][0] + text, attr)
+            else:
+                cur.append((text, attr))
+            cur_len += len(text)
 
         def flush() -> None:
-            nonlocal cur, cur_len
+            nonlocal cur, cur_len, first_visual_line
             out.append(cur if cur else [("", curses.A_NORMAL)])
             cur = []
             cur_len = 0
+            first_visual_line = False
+
+            # Prefix continuation lines so wrapped content starts at value column
+            if align > 0:
+                _append(" " * align, curses.A_NORMAL)
 
         for text, attr in line:
             if not text:
@@ -353,22 +396,18 @@ def _wrap_styled_lines(lines: list[StyledLine], width: int) -> list[StyledLine]:
                 space = width - cur_len
                 if space <= 0:
                     flush()
-                    space = width
+                    space = width - cur_len
 
                 chunk = text[i:i + space]
                 i += len(chunk)
 
-                if cur and cur[-1][1] == attr:
-                    cur[-1] = (cur[-1][0] + chunk, attr)
-                else:
-                    cur.append((chunk, attr))
-
-                cur_len += len(chunk)
+                _append(chunk, attr)
 
                 if cur_len >= width:
                     flush()
 
-        flush()
+        # Final line for this logical line
+        out.append(cur if cur else [("", curses.A_NORMAL)])
 
     return out
 
@@ -437,6 +476,7 @@ def _viewer(stdscr: "curses._CursesWindow", path: str) -> None:
 
     idx = 0
     scroll = 0
+    indent_delta = 4
 
     while True:
         height, width = stdscr.getmaxyx()
@@ -460,7 +500,7 @@ def _viewer(stdscr: "curses._CursesWindow", path: str) -> None:
         raw = _read_line_at(path, start, end)
         row = _parse_row(raw, idx)
 
-        header = f"{os.path.basename(path)}  |  {idx + 1}/{total_lines}  |  ↑/↓ row  PgUp/PgDn scroll  q quit"
+        header = f"{os.path.basename(path)}  |  {idx + 1}/{total_lines}  |  ↑/↓ row  ←/→ indent  PgUp/PgDn scroll  q quit"
         stdscr.addnstr(0, 0, header, max(0, width - 1), curses.A_REVERSE)
 
         title = row.title
@@ -470,13 +510,13 @@ def _viewer(stdscr: "curses._CursesWindow", path: str) -> None:
         content_width = max(1, width - 1)
 
         if row.ok:
-            styled_lines = _render_json_styled(row.obj, 0, key_attr_fn, normal_attr)
+            styled_lines = _render_json_styled(row.obj, 0, key_attr_fn, normal_attr, indent_delta)
         else:
             raw = row.raw_fallback or ""
             styled_lines = [[(raw, curses.A_DIM)]]
         
         if row.ok:
-            styled_lines = _render_json_styled(row.obj, 0, key_attr_fn, normal_attr)
+            styled_lines = _render_json_styled(row.obj, 0, key_attr_fn, normal_attr, indent_delta)
         else:
             raw = row.raw_fallback or ""
             styled_lines = [[(raw, curses.A_DIM)]]
@@ -524,6 +564,10 @@ def _viewer(stdscr: "curses._CursesWindow", path: str) -> None:
         elif ch == curses.KEY_UP:
             idx -= 1
             scroll = 0
+        elif ch == curses.KEY_LEFT:
+            indent_delta = max(indent_delta - 1, 1)
+        elif ch == curses.KEY_RIGHT:
+            indent_delta = min(indent_delta + 1, 8)
         elif ch in (curses.KEY_NPAGE,):
             scroll += max(1, content_height)
         elif ch in (curses.KEY_PPAGE,):
