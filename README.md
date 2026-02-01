@@ -11,7 +11,9 @@ A CLI tool to manually view the rows of a JSON lines file.
 After cloning the repository, run the following installation command:
 
 ```
-python -m pip install -e .
+$ git clone https://github.com/looooonk/jsonl-viewer.git
+$ cd jsonl-viewer
+$ python -m pip install -e .
 ```
 
 ## Usage
