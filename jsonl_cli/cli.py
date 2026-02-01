@@ -455,56 +455,44 @@ def _prompt_command(stdscr: "curses._CursesWindow", prompt: str = ":") -> str | 
     buf: list[str] = []
     pos = 0
 
-    # Display prompt
     stdscr.move(y, 0)
     stdscr.clrtoeol()
     stdscr.addnstr(y, 0, prompt, width - 1, curses.A_REVERSE)
     stdscr.refresh()
 
     while True:
-        ch = stdscr.get_wch()  # returns str for printable, int for special keys
+        ch = stdscr.get_wch()
 
-        # Cancel
-        if ch == "\x1b":  # ESC
+        if ch == "\x1b":
             return None
 
-        # Enter
         if ch in ("\n", "\r"):
             return "".join(buf).strip()
 
-        # Backspace variants
         if ch in (curses.KEY_BACKSPACE, "\b", "\x7f"):
             if pos > 0:
                 buf.pop(pos - 1)
                 pos -= 1
 
-        # Left / Right
         elif ch == curses.KEY_LEFT:
             pos = max(0, pos - 1)
         elif ch == curses.KEY_RIGHT:
             pos = min(len(buf), pos + 1)
-
-        # Home / End
         elif ch == curses.KEY_HOME:
             pos = 0
         elif ch == curses.KEY_END:
             pos = len(buf)
-
-        # Printable char
         elif isinstance(ch, str) and ch.isprintable():
             buf.insert(pos, ch)
             pos += 1
 
-        # Redraw line
         cmd_text = prompt + "".join(buf)
         if len(cmd_text) >= width:
-            # crude horizontal clipping: show the rightmost part
             cmd_text = cmd_text[-(width - 1):]
         stdscr.move(y, 0)
         stdscr.clrtoeol()
         stdscr.addnstr(y, 0, cmd_text, width - 1, curses.A_REVERSE)
 
-        # Place cursor (best-effort)
         cursor_x = min(width - 1, len(prompt) + pos)
         stdscr.move(y, cursor_x)
         stdscr.refresh()
@@ -537,12 +525,11 @@ def _apply_command(cmd: str, total_lines: int, idx: int) -> tuple[int, str | Non
         if total_lines <= 0:
             return idx, "file has no rows"
 
-        # 1-indexed user input
         n = max(1, min(total_lines, n))
         return n - 1, None
 
     if name in ("q", "quit", "exit"):
-        return -1, None  # sentinel: caller quits
+        return -1, None
 
     return idx, f"unknown command: {cmd}"
 
