@@ -63,7 +63,15 @@ def _key_to_pair_id(key: str, num_pairs: int) -> int:
 
 
 def _load_theme(theme: str) -> List[str]:
+    """
+    Loads a theme's hex colors.
     
+    Args:
+        theme: Name of the theme.
+    
+    Returns:
+        A list of strings that represent hex colors for that theme.
+    """
     try:
         path = Path(__file__).parent / "themes" / f"{theme}.json"
         with path.open("r", encoding="utf-8") as f:
