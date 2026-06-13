@@ -1,0 +1,4 @@
+{"id":1,"user":{"name":"Alice Kim","email":"alice@example.com","roles":["admin","editor"]},"items":[{"name":"Widget","tags":["new","blue"]},{"name":"Cable","tags":["spare"]}],"notes":"Shipping delayed","active":true}
+{"id":2,"user":{"name":"Bob Stone","email":"bob@example.net","roles":["viewer"]},"items":[{"name":"Adapter","tags":["urgent"]}],"notes":"Needs review","active":false}
+{"id":3,"user":{"name":"Carol Jones","email":"carol@sample.org","roles":[]},"items":[{"name":"Widget Pro","tags":["premium"]},{"name":"Stand","tags":["desk","metal"]}],"notes":"ALICE referred this order","active":true}
+{"id":4,"message":"plain text marker","metadata":{"owner":{"name":"Dana"},"reviewer":{"name":"Eli"},"priority":3},"items":[],"misc":[{"deep":{"target":"needle"}}]}

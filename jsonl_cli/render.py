@@ -125,6 +125,7 @@ def _wrap_styled_lines(lines: list[StyledLine], width: int) -> list[StyledLine]:
     out: list[StyledLine] = []
 
     for line in lines:
+        out_start = len(out)
         rendered = "".join(t for t, _ in line)
 
         sep = rendered.find(": ")
@@ -139,12 +140,20 @@ def _wrap_styled_lines(lines: list[StyledLine], width: int) -> list[StyledLine]:
 
         cur: StyledLine = []
         cur_len = 0
-        first_visual_line = True
+        needs_indent = False
+
+        def _append_indent() -> None:
+            nonlocal cur, cur_len, needs_indent
+            if needs_indent and align > 0:
+                cur.append((" " * align, curses.A_NORMAL))
+                cur_len += align
+            needs_indent = False
 
         def _append(text: str, attr: int) -> None:
             nonlocal cur, cur_len
             if not text:
                 return
+            _append_indent()
             if cur and cur[-1][1] == attr:
                 cur[-1] = (cur[-1][0] + text, attr)
             else:
@@ -152,14 +161,11 @@ def _wrap_styled_lines(lines: list[StyledLine], width: int) -> list[StyledLine]:
             cur_len += len(text)
 
         def flush() -> None:
-            nonlocal cur, cur_len, first_visual_line
+            nonlocal cur, cur_len, needs_indent
             out.append(cur if cur else [("", curses.A_NORMAL)])
             cur = []
             cur_len = 0
-            first_visual_line = False
-
-            if align > 0:
-                _append(" " * align, curses.A_NORMAL)
+            needs_indent = True
 
         for text, attr in line:
             if not text:
@@ -167,9 +173,11 @@ def _wrap_styled_lines(lines: list[StyledLine], width: int) -> list[StyledLine]:
 
             i = 0
             while i < len(text):
+                _append_indent()
                 space = width - cur_len
                 if space <= 0:
                     flush()
+                    _append_indent()
                     space = width - cur_len
 
                 chunk = text[i:i + space]
@@ -180,6 +188,9 @@ def _wrap_styled_lines(lines: list[StyledLine], width: int) -> list[StyledLine]:
                 if cur_len >= width:
                     flush()
 
-        out.append(cur if cur else [("", curses.A_NORMAL)])
+        if cur:
+            out.append(cur)
+        elif len(out) == out_start:
+            out.append([("", curses.A_NORMAL)])
 
     return out

@@ -19,6 +19,8 @@ summary mode for file characteristics.
   handling, and brief mode.
 - `jsonl_cli/command.py`: command prompt input and command dispatch, such as
   `:goto` and `:quit`.
+- `jsonl_cli/search.py`: vim-like search parsing, nested field traversal, row
+  scanning, and match state helpers.
 - `jsonl_cli/render.py`: JSON value rendering and terminal-width wrapping.
 - `jsonl_cli/colors.py`: theme loading and curses color mapping.
 - `jsonl_cli/helpers.py`: file validation, byte offsets, row parsing, summaries,
@@ -26,6 +28,7 @@ summary mode for file characteristics.
 - `jsonl_cli/containers.py`: shared dataclasses and render type aliases.
 - `jsonl_cli/themes/*.json`: packaged color themes. These are included through
   `tool.setuptools.package-data`.
+- `tests/`: committed `unittest` coverage and synthetic JSONL fixtures.
 - `resources/`: README and documentation assets only.
 
 ## Development Commands
@@ -55,12 +58,17 @@ Build a source and wheel distribution when packaging locally:
 python -m build
 ```
 
-There is no committed automated test suite yet. For behavior changes, add tests
-if a test framework is introduced; otherwise validate manually with at least:
+Run the committed unit tests:
 
 ```sh
-jsonl path/to/sample.jsonl --brief
-jsonl path/to/sample.jsonl
+python -m unittest
+```
+
+For CLI behavior changes, also validate manually with at least:
+
+```sh
+jsonl tests/fixtures/search_sample.jsonl --brief
+jsonl tests/fixtures/search_sample.jsonl
 ```
 
 For curses changes, manually check small terminals, wide terminals, empty files,
@@ -99,8 +107,11 @@ invalid JSON rows, long wrapped values, and theme fallback behavior.
   `curses.error`; handle those cases without crashing where practical.
 - When changing key bindings, update both the header text in `cli.py` and the
   README.
-- When adding commands, implement parsing in `jsonl_cli/command.py` and keep
-  command status messages short enough for narrow terminals.
+- When adding general commands, implement parsing in `jsonl_cli/command.py`.
+  Keep search-specific parsing and matching in `jsonl_cli/search.py`.
+- Keep command status messages short enough for narrow terminals.
+- Search should preserve byte-offset navigation and scan rows one at a time.
+  Field filters should support nested object paths, list indexes, and wildcards.
 
 ## Theme Guidelines
 
@@ -147,4 +158,3 @@ Do not rename the package, console script, or tap instructions without updating
   steps, theme behavior, or screenshots change.
 - Keep examples runnable from a normal shell.
 - Do not document planned behavior as currently available behavior.
-

@@ -68,5 +68,30 @@ Currently, the following commands are supported:
     ```
     :goto INT
     ```
+- Search all fields in parsed JSON rows:
+    ```
+    /TEXT
+    :find TEXT
+    ```
+- Search only specific fields, including nested fields:
+    ```
+    :find FIELD[,FIELD...]: TEXT
+    :find user.name,items[].title: alice
+    ```
+- Repeat the last search:
+    ```
+    n
+    N
+    :next
+    :prev
+    ```
+- Search options:
+    ```
+    :find -c TEXT
+    :find -r FIELD: REGEX
+    ```
 
-Other commands, including `find` with regular expressions and aggregation are in development.
+Field paths use `.` for nested objects, numeric list indexes such as `items.0.name`,
+`[]` for any list item, and `*` for any object value or list item. Search is
+case-insensitive by default; `-c` makes it case-sensitive and `-r` treats the
+query as a regular expression.

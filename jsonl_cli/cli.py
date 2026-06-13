@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import argparse
 import curses
 import os
@@ -8,6 +10,7 @@ from .render import _render_json_styled, _wrap_styled_lines
 from .helpers import _validate_path, _build_offsets, _human_bytes, \
                      _read_line_at, _scan_brief, _parse_row, _die
 from .command import _apply_command, _prompt_command
+from .search import SearchSpec, _find_next, _parse_search_spec
 
 
 def _viewer(stdscr: "curses._CursesWindow", path: str, theme: str) -> None:
@@ -53,6 +56,41 @@ def _viewer(stdscr: "curses._CursesWindow", path: str, theme: str) -> None:
     idx = 0
     scroll = 0
     indent_delta = 4
+    last_search: SearchSpec | None = None
+
+    def apply_search(raw: str, include_current: bool = False, direction: int = 1) -> None:
+        nonlocal idx, scroll, status_msg, last_search
+        spec, err = _parse_search_spec(raw)
+        if err:
+            status_msg = err
+            return
+
+        hit = _find_next(path, offsets, total_lines, idx, spec, direction, include_current)
+        last_search = spec
+        if hit is None:
+            status_msg = f"no match: {spec.label()}"
+            return
+
+        idx = hit.idx
+        scroll = 0
+        prefix = "wrapped to " if hit.wrapped else ""
+        status_msg = f"{prefix}row {idx + 1}: {spec.label()}"
+
+    def repeat_search(direction: int) -> None:
+        nonlocal idx, scroll, status_msg
+        if last_search is None:
+            status_msg = "no previous search"
+            return
+
+        hit = _find_next(path, offsets, total_lines, idx, last_search, direction, False)
+        if hit is None:
+            status_msg = f"no match: {last_search.label()}"
+            return
+
+        idx = hit.idx
+        scroll = 0
+        prefix = "wrapped to " if hit.wrapped else ""
+        status_msg = f"{prefix}row {idx + 1}: {last_search.label()}"
 
     while True:
         height, width = stdscr.getmaxyx()
@@ -76,7 +114,7 @@ def _viewer(stdscr: "curses._CursesWindow", path: str, theme: str) -> None:
         raw = _read_line_at(path, start, end)
         row = _parse_row(raw, idx)
 
-        header = f"{os.path.basename(path)}  |  {idx + 1}/{total_lines}  |  ↑/↓ scroll  ←/→ row  PgUp/PgDn indent  q quit"
+        header = f"{os.path.basename(path)}  |  {idx + 1}/{total_lines}  |  ↑/↓ scroll  ←/→ row  / find  n/N next/prev  q quit"
         stdscr.addnstr(0, 0, header, max(0, width - 1), curses.A_REVERSE)
 
         title = row.title
@@ -85,12 +123,6 @@ def _viewer(stdscr: "curses._CursesWindow", path: str, theme: str) -> None:
         content_height = max(0, height - 3)
         content_width = max(1, width - 1)
 
-        if row.ok:
-            styled_lines = _render_json_styled(row.obj, 0, key_attr_fn, normal_attr, indent_delta)
-        else:
-            raw = row.raw_fallback or ""
-            styled_lines = [[(raw, curses.A_DIM)]]
-        
         if row.ok:
             styled_lines = _render_json_styled(row.obj, 0, key_attr_fn, normal_attr, indent_delta)
         else:
@@ -124,17 +156,11 @@ def _viewer(stdscr: "curses._CursesWindow", path: str, theme: str) -> None:
                 x += len(chunk)
                 remaining -= len(chunk)
 
-
-        if max_scroll > 0:
-            footer = None
-            if status_msg:
-                footer = status_msg
-            elif max_scroll > 0:
-                footer = f"Lines {scroll} - {min(scroll + content_height, len(styled_lines))}"
-
-            if footer:
-                stdscr.addnstr(height - 1, 0, footer, max(0, width - 1), curses.A_DIM)
-
+        footer = status_msg
+        if footer is None and max_scroll > 0:
+            footer = f"Lines {scroll} - {min(scroll + content_height, len(styled_lines))}"
+        if footer and height > 0:
+            stdscr.addnstr(height - 1, 0, footer, max(0, width - 1), curses.A_DIM)
 
         stdscr.refresh()
         ch = stdscr.getch()
@@ -145,12 +171,30 @@ def _viewer(stdscr: "curses._CursesWindow", path: str, theme: str) -> None:
             cmd = _prompt_command(stdscr, prompt=":")
             status_msg = None
             if cmd is not None:
-                new_idx, msg = _apply_command(cmd, total_lines, idx)
-                if new_idx == -1:
-                    return
-                idx = new_idx
-                scroll = 0
-                status_msg = msg
+                parts = cmd.split(maxsplit=1)
+                name = parts[0].lower() if parts else ""
+                if name in ("find", "f", "search", "s"):
+                    apply_search(parts[1] if len(parts) == 2 else "", include_current=True)
+                elif name in ("next", "n"):
+                    repeat_search(1)
+                elif name in ("prev", "previous", "p"):
+                    repeat_search(-1)
+                else:
+                    new_idx, msg = _apply_command(cmd, total_lines, idx)
+                    if new_idx == -1:
+                        return
+                    idx = new_idx
+                    scroll = 0
+                    status_msg = msg
+        elif ch == ord("/"):
+            cmd = _prompt_command(stdscr, prompt="/")
+            status_msg = None
+            if cmd is not None:
+                apply_search(cmd, include_current=True)
+        elif ch == ord("n"):
+            repeat_search(1)
+        elif ch == ord("N"):
+            repeat_search(-1)
         elif ch == curses.KEY_DOWN:
             scroll += 1
         elif ch == curses.KEY_UP:

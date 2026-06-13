@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import curses
+
 
 def _prompt_command(stdscr: "curses._CursesWindow", prompt: str = ":") -> str | None:
     """
