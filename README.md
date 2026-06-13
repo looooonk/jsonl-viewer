@@ -11,13 +11,18 @@ Sample JSONL entry fron the HellaSwag dataset.
 
 ## Installation
 
-Run the following to install:
+Brew: Run the following to install:
 ```
 $ brew tap looooonk/tap
 $ brew install jsonl-cli
 ```
 
-Alternatively, after cloning the repository, run the following installation command:
+Pip: Run the following to install:
+```
+$ pip install jsonl-cli
+```
+
+Manual build: After cloning the repository, run the following installation command:
 
 ```
 $ git clone https://github.com/looooonk/jsonl-viewer.git
